@@ -2219,7 +2219,7 @@ local GLOBAL_ENV = getgenv and getgenv() or _G or shared
 	Saves instances with specified options. Example:
 	```lua
 	local Params = {
-		RepoURL = "https://raw.githubusercontent.com/luau/UniversalSynSaveInstance/main/",
+		RepoURL = "https://raw.githubusercontent.com/UncleTyrone/UniversalSynSaveInstance/main/",
 		SSI = "saveinstance",
 	}
 
@@ -3612,6 +3612,42 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 			or IsolatePlayers
 			or NilInstances and global_container.getnilinstances -- ! Make sure this accurately reflects everything below
 
+		-- Handle each instance
+		local function preDecompileInstance(instance)
+			if isLuaSourceContainer(instance) then
+				local decompiled = ldecompile(instance)
+				if SaveBytecode then
+					local bytecode = SaveBytecode(instance)
+					if bytecode then
+						decompiled = bytecode .. decompiled
+					end
+				end
+
+				decompiled = "-- Saved by UniversalSynSaveInstance (Join to Copy Games) https://discord.gg/wx4ThpAsmw\n\n"
+					.. decompiled
+
+				-- Store decompiled source so it overrides property reading
+				if not InstancesOverrides[instance] then
+					InstancesOverrides[instance] = {}
+				end
+				InstancesOverrides[instance].Properties = InstancesOverrides[instance].Properties or {}
+				InstancesOverrides[instance].Properties.Source = decompiled
+			end
+		end
+
+		-- Pre-decompile all scripts so their source is written directly to XML (like the README)
+		local function preDecompileScripts(parent)
+			if type(parent) == "table" then
+				for _, instance in parent do
+					preDecompileInstance(instance)
+				end
+			else
+				for _, instance in parent:GetDescendants() do
+					preDecompileInstance(instance)
+				end
+			end
+		end
+
 		save_hierarchy(ToSaveList)
 
 		if IsolateLocalPlayer or IsolateLocalPlayerCharacter then
@@ -3619,11 +3655,13 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 			if LocalPlayer then
 				if IsolateLocalPlayer then
 					SaveNotCreatable = true
+					preDecompileScripts(LocalPlayer)
 					save_extra("LocalPlayer", LocalPlayer, true)
 				end
 				if IsolateLocalPlayerCharacter then
 					local LocalPlayerCharacter = LocalPlayer.Character
 					if LocalPlayerCharacter then
+						preDecompileScripts(LocalPlayerCharacter)
 						save_extra("LocalPlayer Character", LocalPlayerCharacter, true, "Model")
 					end
 				end
@@ -3632,12 +3670,25 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 
 		if IsolateStarterPlayer then
 			-- SaveNotCreatable = true -- TODO: Enable if StarterPlayerScripts or StarterCharacterScripts stop showing up in isolated folder in Studio
+			preDecompileScripts(service.StarterPlayer)
 			save_extra("StarterPlayer", service.StarterPlayer) -- no reason to saveprops as you can see the props on the original instance
 		end
 
 		if IsolatePlayers then
 			SaveNotCreatable = true
-			save_extra("Players", service.Players) -- no reason to saveprops as you can see the props on the original instance
+			local playersTable = {}
+
+			-- Convert each player to a Folder so they can be cloned in Studio
+			for _, player in service.Players:GetChildren() do
+				preDecompileScripts(player)
+				InstancesOverrides[player] = {
+					__ClassName = "Folder",
+					__Children = player:GetChildren(),
+				}
+				table.insert(playersTable, player)
+			end
+
+			save_extra("SavedPlayers", playersTable) -- no reason to saveprops as you can see the props on the original instance
 		end
 
 		if NilInstances and global_container.getnilinstances then
@@ -3674,6 +3725,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 				end
 			end
 			SaveNotCreatable = true
+			preDecompileScripts(nil_instances)
 			save_extra("Nil Instances", nil_instances)
 		end
 
